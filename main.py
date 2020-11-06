@@ -138,7 +138,7 @@ def fab_test():
 
 
 def api_test():
-    cmd = ApiAction('customers from paci', 'get customers', 'OPTIONS', 'http://10.26.205.169:4465/paci/v1.0/customer', user='admin', password='qtgXXiiF')
+    cmd = ApiAction('customers from paci', 'get customers', 'OPTIONS', 'http://10.26.205.169:4465/paci/v1.0/customer', user='admin', password='xxxx')
     r = cmd.execute()
     print r
 
