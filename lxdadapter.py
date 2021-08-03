@@ -1,13 +1,13 @@
 import argparse
 import logging
-from os import pipe
+from abc import ABCMeta, abstractmethod
 
 from pylxd import Client
 from pylxd.exceptions import NotFound
 from pylxd.models import Instance, Container
 
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -15,25 +15,48 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 
 
+
 class Result:
     def __init__(self, status=None) -> None:
         self.status = status
 
 
-class Operation:
-    "that will be base class for all operation, they should implement execute and return result"
-    def __init__(self, name, operation, args) -> None:
-        self.name = name
+class AbstractOperation:
+    __metaclass__ = ABCMeta
+
+    version = '0.1'
+
+    @abstractmethod
+    def __init__(self, operation, args):        
         self.operation = operation
         self.args = args
+
+    @abstractmethod
+    def execute(self):
+        pass
     
+    @abstractmethod
+    def _on_success(self):
+        pass
+
+    @abstractmethod
+    def _on_failure(self):
+        pass
+
     def __repr__(self) -> str:
-        return f"Operation: {self.name}"
+        return f"Operation: {self.operation}"
+
+
+class CreateContainerOperation(AbstractOperation):
+    "that will be base class for all operation, they should implement execute and return result"
+    def __init__(self, operation, args) -> None:
+        self.name = 'CreateContainer'
+        self.operation = operation
+        self.args = args        
 
     def execute(self):
         result = Result('success')
         try:
-            logger.info(f'{self.name}: doing some work')
             self.operation(**self.args)
         except:
             result.status = 'failed'
@@ -41,18 +64,28 @@ class Operation:
         self._on_success()
         return result
 
-    def _on_success(self):
-        logger.info(f'{self.name}: operation completed')
+class EchoOperation(AbstractOperation):
+    def __init__(self, args) -> None:
+        self.name = 'Echo'
+        self.operation = print
+        self.args = args
 
-    def _on_failure(self):
-        logger.error(f'{self.name}: failed')
+    def execute(self):
+        result = Result('success')
+        try:
+            print(self.args)
+        except:
+            result.status = 'failed'
+            self._on_failure()
+        self._on_success()
+        return result
 
 
 class Pipeline:
     def __init__(self) -> None:
         self.operations = []
 
-    def add(self, step: Operation):
+    def add(self, step):
         self.operations.append(step)
         return self
 
@@ -84,7 +117,7 @@ class Instance:
 class Config:
     "that would be store for all properties we need"
 
-    endpoint = 'https://172.19.204.62:8443'
+    endpoint = 'https://172.20.34.108:8443'
     
     key = 'lxd.key'
     cert = 'lxd.crt'
@@ -150,12 +183,12 @@ def main():
     lxd = LxdAdapter()
 
     pipeline = Pipeline()
-    #pipeline.add(Operation("simple print", print, "begin"))
-    # pipeline.add(Operation("test connection"))
-    # or we can just subclass from Operation and do exact work without invoking but simple using the context 
-    pipeline.add(Operation("create container", lxd.create_container, {'name': name, 'os':'ubuntu/21.04'}))
-    #pipeline.add(Operation("simple print", print, "finished"))
-    print(pipeline)
+    pipeline.add(EchoOperation("begin"))
+    pipeline.add(EchoOperation("test connection"))
+    pipeline.add(CreateContainerOperation(lxd.create_container, {'name': name, 'os':'ubuntu/21.04'}))
+    pipeline.add(EchoOperation("finished"))
+    
+    pipeline.run()
 
 
     # lxd.create_container(name)
