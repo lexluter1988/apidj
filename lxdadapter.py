@@ -172,9 +172,9 @@ class LxdAdapter:
             print('getting container')
             i = self.client.instances.get(name)
             print('stopping container')
-            i.stop(name, wait=True)
+            i.stop(wait=True)
             print('deleting container')
-            i.delete(name, wait=True)
+            i.delete(wait=True)
             logger.info('Container {} has been deleted'.format(name))
         except NotFound:
             logger.error('Container {} deletion failed'.format(name))
