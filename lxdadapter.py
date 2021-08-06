@@ -11,7 +11,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('[PID %(process)s %(filename)s:%(lineno)d] - '
+                              '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
@@ -122,6 +123,20 @@ class EchoOperation(AbstractOperation):
         return result
 
 
+class ExecContainerOperation:
+    def __init__(self, context) -> None:
+        self.name = 'Exec'
+        self.context = context
+
+    def execute(self):
+        result = Result('success')
+        try:
+            self.context.client.execute(self.context.args, self.context.command)
+        except:
+            result.status = 'failed'
+        return result
+
+
 class Pipeline:
     def __init__(self) -> None:
         self.operations = []
@@ -135,6 +150,7 @@ class Pipeline:
 
     def run(self):
         for step in self.operations:
+            print('running {}'.format(step))
             result = step.execute()
             if result.status == 'failed':
                 logger.error('We should not continue, pipeline should fall')
@@ -167,6 +183,18 @@ class LxdAdapter:
             cert=(Config.cert, Config.key),
             verify=False)
 
+    def execute(self, name, command):
+        try:
+            print('inside execute')
+            i = self.client.instances.get(name)
+            print('found container, running execute')
+            out = i.execute(command)
+            logger.info('Container {} operation {} has been executed with {}'.format(name, command, out))
+        except NotFound:
+            logger.error('Container {} not found failed'.format(name))
+        except Exception as e:
+            logger.error(e)
+
     def delete_container(self, name):
         try:
             print('getting container')
@@ -178,6 +206,8 @@ class LxdAdapter:
             logger.info('Container {} has been deleted'.format(name))
         except NotFound:
             logger.error('Container {} deletion failed'.format(name))
+        except Exception as e:
+            logger.error(e)
 
     def find_container(self, name):
         try:
@@ -185,6 +215,8 @@ class LxdAdapter:
             logger.info('Container {} already exists'.format(name))
         except NotFound:
             logger.error('Container {} not found'.format(name))
+        except Exception as e:
+            logger.error(e)
 
     def create_container(self, name, os='ubuntu/21.04'):
         config = {
@@ -205,6 +237,8 @@ class LxdAdapter:
             raise
         except NotFound:
             logger.info('Container {} not found, can be created'.format(name))
+        except Exception as e:
+            logger.error(e)
 
         try:
             # TODO this is why I cannot get operation after creation, it's inside of pylxd
@@ -236,6 +270,17 @@ class CreateContainerPipeline(Pipeline):
             CreateContainerOperation(
                 getattr(context.client, context.operation),
                 {'name': context.args, 'os': 'ubuntu/21.04'}),
+            EchoOperation("finished")
+        ]
+
+
+class ExecContainerPipeline(Pipeline):
+    def __init__(self, context):
+        super().__init__()
+        self.operations = [
+            EchoOperation("begin"),
+            EchoOperation("test connection"),
+            ExecContainerOperation(context),
             EchoOperation("finished")
         ]
 
@@ -272,25 +317,33 @@ class Context:
         self.result = None
 
     @classmethod
-    def make_context(cls, operation, args):
+    def make_context(cls, operation, args, command=None):
         # TODO: this is really consuming operation
         # every init will trigger connection attempt
-        return cls(LxdAdapter(), operation, args)
+        instance = cls(LxdAdapter(), operation, args)
+        if command:
+            instance.command = command
+        return instance
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, help="Name of the container to create", required=True)
     parser.add_argument("--action", type=str, help="Action you want to do", required=True)
+    parser.add_argument("--command", type=str, help="Action you want to do", required=False)
     name = parser.parse_args().name
     action = parser.parse_args().action
-    context = Context.make_context(action, name)
+    command = [parser.parse_args().command]
+
+    context = Context.make_context(action, name, command)
     if 'create' in action:
         pipeline = CreateContainerPipeline(context)
     elif 'find' in action:
         pipeline = FindContainerPipeline(context)
     elif 'delete' in action:
         pipeline = DeleteContainerPipeline(context)
+    elif 'exec' in action:
+        pipeline = ExecContainerPipeline(context)
     else:
         raise Exception("Please chose wisely")
 
