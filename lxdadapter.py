@@ -87,22 +87,18 @@ class FindContainerOperation(AbstractOperation):
         return result
 
 
-class CreateContainerOperation(AbstractOperation):
+class CreateContainerOperation:
 
-    def __init__(self, operation, args) -> None:
-        super().__init__(operation, args)
+    def __init__(self, context) -> None:
         self.name = 'CreateContainer'
-        self.operation = operation
-        self.args = args
+        self.context = context
 
     def execute(self):
         result = Result('success')
         try:
-            self.operation(**self.args)
+            self.context.client.create_container(self.context.args)
         except:
             result.status = 'failed'
-            self._on_failure()
-        self._on_success()
         return result
 
 
@@ -185,9 +181,7 @@ class LxdAdapter:
 
     def execute(self, name, command):
         try:
-            print('inside execute')
             i = self.client.instances.get(name)
-            print('found container, running execute')
             out = i.execute(command)
             logger.info('Container {} operation {} has been executed with {}'.format(name, command, out))
         except NotFound:
@@ -197,11 +191,8 @@ class LxdAdapter:
 
     def delete_container(self, name):
         try:
-            print('getting container')
             i = self.client.instances.get(name)
-            print('stopping container')
             i.stop(wait=True)
-            print('deleting container')
             i.delete(wait=True)
             logger.info('Container {} has been deleted'.format(name))
         except NotFound:
@@ -229,8 +220,6 @@ class LxdAdapter:
                 'alias': os},
             'profiles': ['default']
         }
-
-        # checking for existing container
         try:
             self.client.instances.get(name)
             logger.error('Container {} already exists, please chose another name'.format(name))
@@ -267,9 +256,7 @@ class CreateContainerPipeline(Pipeline):
         self.operations = [
             EchoOperation("begin"),
             EchoOperation("test connection"),
-            CreateContainerOperation(
-                getattr(context.client, context.operation),
-                {'name': context.args, 'os': 'ubuntu/21.04'}),
+            CreateContainerOperation(context),
             EchoOperation("finished")
         ]
 
