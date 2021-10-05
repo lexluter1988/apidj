@@ -129,7 +129,7 @@ class ExecContainerOperation:
     def execute(self):
         result = Result('success')
         try:
-            self.context.client.execute(self.context.args, self.context.command)
+            self.context.client.exec(self.context.args, self.context.command)
         except:
             result.status = 'failed'
         return result
@@ -320,7 +320,7 @@ def main():
     parser.add_argument("--command", type=str, help="Action you want to do", required=False)
     name = parser.parse_args().name
     action = parser.parse_args().action
-    command = [parser.parse_args().command]
+    command = parser.parse_args().command.split()
 
     context = Context.make_context(action, name, command)
     if 'create' in action:
