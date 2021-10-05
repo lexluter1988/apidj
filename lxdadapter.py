@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from pylxd import Client
 from pylxd.exceptions import NotFound
-from pylxd.models import Instance, Container
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -48,6 +47,8 @@ class AbstractOperation:
         return f"Operation: {self.operation}"
 
 
+# TODO: think if we really need AbstactOperation
+# maybe just subclass from Operation
 class DeleteContainerOperation(AbstractOperation):
 
     def __init__(self, operation, args) -> None:
@@ -95,8 +96,9 @@ class CreateContainerOperation:
 
     def execute(self):
         result = Result('success')
+        print(self.context.args)
         try:
-            self.context.client.create_container(self.context.args)
+            self.context.client.create(self.context.args)
         except:
             result.status = 'failed'
         return result
@@ -146,7 +148,6 @@ class Pipeline:
 
     def run(self):
         for step in self.operations:
-            print('running {}'.format(step))
             result = step.execute()
             if result.status == 'failed':
                 logger.error('We should not continue, pipeline should fall')
@@ -179,7 +180,7 @@ class LxdAdapter:
             cert=(Config.cert, Config.key),
             verify=False)
 
-    def execute(self, name, command):
+    def exec(self, name, command):
         try:
             i = self.client.instances.get(name)
             out = i.execute(command)
@@ -189,7 +190,7 @@ class LxdAdapter:
         except Exception as e:
             logger.error(e)
 
-    def delete_container(self, name):
+    def delete(self, name):
         try:
             i = self.client.instances.get(name)
             i.stop(wait=True)
@@ -200,7 +201,7 @@ class LxdAdapter:
         except Exception as e:
             logger.error(e)
 
-    def find_container(self, name):
+    def find(self, name):
         try:
             self.client.instances.get(name)
             logger.info('Container {} already exists'.format(name))
@@ -209,7 +210,7 @@ class LxdAdapter:
         except Exception as e:
             logger.error(e)
 
-    def create_container(self, name, os='ubuntu/21.04'):
+    def create(self, name, os='ubuntu/21.04'):
         config = {
             'name': name,
             'source': {
@@ -222,8 +223,7 @@ class LxdAdapter:
         }
         try:
             self.client.instances.get(name)
-            logger.error('Container {} already exists, please chose another name'.format(name))
-            raise
+            raise Exception('Container {} already exists, please chose another name'.format(name))
         except NotFound:
             logger.info('Container {} not found, can be created'.format(name))
         except Exception as e:
@@ -316,7 +316,7 @@ class Context:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, help="Name of the container to create", required=True)
-    parser.add_argument("--action", type=str, help="Action you want to do", required=True)
+    parser.add_argument("--action", type=str, help="Action you want to do [create, find, delete, exec]", required=True)
     parser.add_argument("--command", type=str, help="Action you want to do", required=False)
     name = parser.parse_args().name
     action = parser.parse_args().action
