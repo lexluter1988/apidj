@@ -1,10 +1,11 @@
 import argparse
 import logging
+import socket
 from abc import ABCMeta, abstractmethod
 from uuid import uuid4
 
 from pylxd import Client
-from pylxd.exceptions import NotFound
+from pylxd.exceptions import NotFound, ClientConnectionFailed
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -14,6 +15,40 @@ formatter = logging.Formatter('[PID %(process)s %(filename)s:%(lineno)d] - '
                               '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+
+class Config:
+    """
+    that would be store for all properties we need
+    """
+
+    endpoint = 'https://10.211.55.6:8443'
+
+    key = 'lxd.key'
+    cert = 'lxd.crt'
+
+    image_servers = [
+        'https://images.linuxcontainers.org',
+        'https://cloud-images.ubuntu.com/releases',
+        'https://cloud-images.ubuntu.com/daily']
+
+
+class Context:
+    def __init__(self, client, operation, args):
+        self.uuid = uuid4()
+        self.client = client
+        self.operation = operation
+        self.args = args
+        self.result = None
+
+    @classmethod
+    def make_context(cls, operation, args, command=None):
+        # TODO: this is really consuming operation
+        # every init will trigger connection attempt
+        instance = cls(LxdAdapter(), operation, args)
+        if command:
+            instance.command = command
+        return instance
 
 
 class Result:
@@ -47,10 +82,7 @@ class AbstractOperation:
         return f"Operation: {self.operation}"
 
 
-# TODO: think if we really need AbstactOperation
-# maybe just subclass from Operation
 class DeleteContainerOperation(AbstractOperation):
-
     def __init__(self, operation, args) -> None:
         super().__init__(operation, args)
         self.name = 'DeleteContainer'
@@ -88,15 +120,37 @@ class FindContainerOperation(AbstractOperation):
         return result
 
 
+class ConnectionCheckOperation:
+    # TODO: implement decorator for socket conn
+    def __init__(self, context: Context) -> None:
+        self.name = 'ConnectionCheck'
+        self.context = context
+
+    def execute(self):
+        result = Result('success')
+
+        a_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        location = ("10.211.55.6", 8443)
+        result_of_check = a_socket.connect_ex(location)
+
+        if result_of_check == 0:
+            logger.info("Connection is fine")
+        else:
+            logger.error("Connection failed")
+            result.status = 'failed'
+        a_socket.close()
+        return result
+
+
 class CreateContainerOperation:
 
-    def __init__(self, context) -> None:
+    def __init__(self, context: Context) -> None:
         self.name = 'CreateContainer'
         self.context = context
 
     def execute(self):
         result = Result('success')
-        print(self.context.args)
         try:
             self.context.client.create(self.context.args)
         except:
@@ -122,7 +176,7 @@ class EchoOperation(AbstractOperation):
 
 
 class ExecContainerOperation:
-    def __init__(self, context) -> None:
+    def __init__(self, context: Context) -> None:
         self.name = 'Exec'
         self.context = context
 
@@ -159,26 +213,17 @@ class Pipeline:
         return f"Pipeline with: {[operation.name for operation in self.operations]}"
 
 
-class Config:
-    "that would be store for all properties we need"
-
-    endpoint = 'https://10.211.55.6:8443'
-
-    key = 'lxd.key'
-    cert = 'lxd.crt'
-
-    image_servers = [
-        'https://images.linuxcontainers.org',
-        'https://cloud-images.ubuntu.com/releases',
-        'https://cloud-images.ubuntu.com/daily']
-
-
 class LxdAdapter:
     def __init__(self) -> None:
-        self.client = Client(
-            endpoint=Config.endpoint,
-            cert=(Config.cert, Config.key),
-            verify=False)
+        try:
+            self.client = Client(
+                endpoint=Config.endpoint,
+                cert=(Config.cert, Config.key),
+                verify=False,
+                timeout=10)
+        except ClientConnectionFailed:
+            logger.error('Failed to connect to the LXD server, please check the connection')
+            raise
 
     def exec(self, name, command):
         try:
@@ -230,7 +275,7 @@ class LxdAdapter:
             logger.error(e)
 
         try:
-            # TODO this is why I cannot get operation after creation, it's inside of pylxd
+            # TODO this is why I cannot get operation_id after creation, it's inside of pylxd
             # response = client.api[cls._endpoint].post(json=config, target=target)
 
             # if wait:
@@ -251,7 +296,7 @@ class LxdAdapter:
 
 
 class CreateContainerPipeline(Pipeline):
-    def __init__(self, context):
+    def __init__(self, context: Context):
         super().__init__()
         self.operations = [
             EchoOperation("begin"),
@@ -262,23 +307,23 @@ class CreateContainerPipeline(Pipeline):
 
 
 class ExecContainerPipeline(Pipeline):
-    def __init__(self, context):
+    def __init__(self, context: Context):
         super().__init__()
         self.operations = [
             EchoOperation("begin"),
-            EchoOperation("test connection"),
+            ConnectionCheckOperation(context),
             ExecContainerOperation(context),
             EchoOperation("finished")
         ]
 
 
 class FindContainerPipeline(Pipeline):
-    def __init__(self, context):
+    def __init__(self, context: Context):
         super().__init__()
         self.operations = [
             EchoOperation("begin"),
-            EchoOperation("test connection"),
-            # IDK if we really need to extract operation from context, cause we know what is FindContainerOperation
+            ConnectionCheckOperation(context),
+            # TODO: IDK if we really need to extract operation from context, cause we know what is FindContainerOperation
             FindContainerOperation(getattr(context.client, context.operation), context.args),
             EchoOperation("finished")
         ]
@@ -295,24 +340,6 @@ class DeleteContainerPipeline(Pipeline):
         ]
 
 
-class Context:
-    def __init__(self, client, operation, args):
-        self.uuid = uuid4()
-        self.client = client
-        self.operation = operation
-        self.args = args
-        self.result = None
-
-    @classmethod
-    def make_context(cls, operation, args, command=None):
-        # TODO: this is really consuming operation
-        # every init will trigger connection attempt
-        instance = cls(LxdAdapter(), operation, args)
-        if command:
-            instance.command = command
-        return instance
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, help="Name of the container to create", required=True)
@@ -320,7 +347,9 @@ def main():
     parser.add_argument("--command", type=str, help="Action you want to do", required=False)
     name = parser.parse_args().name
     action = parser.parse_args().action
-    command = parser.parse_args().command.split()
+    command = parser.parse_args().command
+    if command:
+        command = command.split()
 
     context = Context.make_context(action, name, command)
     if 'create' in action:
@@ -343,8 +372,6 @@ def main():
     # pipeline.add(EchoOperation("finished"))
 
     pipeline.run()
-
-    # lxd.create_container(name)
 
 
 if __name__ == '__main__':
